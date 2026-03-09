@@ -22,7 +22,7 @@ pip install -r ./requirements.txt
 python ./main.py
 ```
 
-## Compile
+## Freeze to exe
 ```bash
 pyinstaller --onefile --noconsole --name antiAFK4roblox --hidden-import=win32com.client main.py
 ```
