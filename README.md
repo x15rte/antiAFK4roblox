@@ -11,7 +11,7 @@ This tool currently supports Windows only.
 ### Method 1
 Download and run the latest release from the [Releases page](https://github.com/x15rte/antiAFK4roblox/releases).  
 
-**the frozen exe may show the window with a random delay; if nothing appears, wait a bit longer or run via Method 2.**
+**the frozen exe may show the window with a random delay;if nothing appears, wait a bit longer or run via Method2**
 
 ### Method 2
 ```bash
