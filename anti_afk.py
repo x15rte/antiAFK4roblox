@@ -26,6 +26,10 @@ STATUS_OK = None
 STATUS_NOT_FOUND = "not_found"
 STATUS_MINIMIZED = "minimized"
 
+MSG_ACTION_SENT = "Action sent"
+MSG_ROBLOX_MINIMIZED = "Roblox minimized"
+MSG_ROBLOX_NOT_FOUND = "Roblox window not found"
+
 
 def _get_pids_by_process_name(process_name):
     """Return PIDs for process name via WMI. On failure return []."""
@@ -42,7 +46,7 @@ def _get_pids_by_process_name(process_name):
 
 def is_environment_ready():
     """Return (ok, message). Ok if pywin32 is available."""
-    if win32gui is None or win32process is None:
+    if win32gui is None or win32process is None or win32api is None:
         return False, "Missing dependency. Please install first:\npip install pywin32"
     return True, ""
 
@@ -61,16 +65,18 @@ def find_roblox_window():
     """Find visible Roblox window. Return (hwnd, status); status None = ok, else 'not_found' or 'minimized'."""
     if win32gui is None or win32process is None:
         return None, STATUS_NOT_FOUND
+    gui = win32gui
+    process = win32process
     pids = set(_get_pids_by_process_name(ROBLOX_PROCESS_NAME))
     if not pids:
         return None, STATUS_NOT_FOUND
     result = [None]
 
     def callback(hwnd, _):
-        if not win32gui.IsWindowVisible(hwnd):
+        if not gui.IsWindowVisible(hwnd):
             return True
         try:
-            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            _, pid = process.GetWindowThreadProcessId(hwnd)
             if pid in pids:
                 result[0] = hwnd
                 return False
@@ -79,7 +85,7 @@ def find_roblox_window():
         return True
 
     try:
-        win32gui.EnumWindows(callback, None)
+        gui.EnumWindows(callback, None)
     except Exception:
         return None, STATUS_NOT_FOUND
 
@@ -93,37 +99,46 @@ def find_roblox_window():
 
 def _bring_to_front(hwnd):
     """Bring window to foreground (caller must have focus)."""
-    if win32gui is None or win32process is None:
+    if win32gui is None or win32process is None or win32api is None:
         return
     user32 = ctypes.windll.user32
     current_tid = win32api.GetCurrentThreadId()
     fg = _get_foreground_window()
+    fg_tid = None
+    target_tid = None
+    attached_fg = False
+    attached_target = False
+
     if fg:
         try:
             fg_tid, _ = win32process.GetWindowThreadProcessId(fg)
             if fg_tid and fg_tid != current_tid:
                 user32.AttachThreadInput(current_tid, fg_tid, True)
+                attached_fg = True
         except Exception:
             pass
+
     try:
         target_tid, _ = win32process.GetWindowThreadProcessId(hwnd)
-        if current_tid != target_tid:
+        if target_tid and current_tid != target_tid:
             user32.AttachThreadInput(current_tid, target_tid, True)
+            attached_target = True
         user32.BringWindowToTop(hwnd)
         win32gui.SetForegroundWindow(hwnd)
-        if current_tid != target_tid:
-            user32.AttachThreadInput(current_tid, target_tid, False)
     except Exception:
         try:
             win32gui.SetForegroundWindow(hwnd)
         except Exception:
             pass
     finally:
-        if fg:
+        if attached_target and target_tid and current_tid != target_tid:
             try:
-                fg_tid, _ = win32process.GetWindowThreadProcessId(fg)
-                if fg_tid and fg_tid != current_tid:
-                    user32.AttachThreadInput(current_tid, fg_tid, False)
+                user32.AttachThreadInput(current_tid, target_tid, False)
+            except Exception:
+                pass
+        if attached_fg and fg_tid and fg_tid != current_tid:
+            try:
+                user32.AttachThreadInput(current_tid, fg_tid, False)
             except Exception:
                 pass
 
@@ -153,12 +168,16 @@ def _get_foreground_window():
 
 def run_action(hwnd):
     """Bring Roblox to front, send I+O, restore previous foreground. Raises ValueError if minimized."""
+    if win32gui and not win32gui.IsWindow(hwnd):
+        raise ValueError("Roblox window is no longer valid")
     if is_window_minimized(hwnd):
         raise ValueError("Roblox window is minimized")
     prev_hwnd = _get_foreground_window()
     _bring_to_front(hwnd)
     time.sleep(0.35)
     try:
+        if _get_foreground_window() != hwnd:
+            raise ValueError("Roblox not in foreground; action skipped")
         _action_i_o()
     finally:
         if prev_hwnd and win32gui and win32gui.IsWindow(prev_hwnd) and win32gui.IsWindowVisible(prev_hwnd):
@@ -188,15 +207,15 @@ class AntiAFKWorker:
                     try:
                         run_action(hwnd)
                         if self.on_status:
-                            self.on_status("Action sent")
+                            self.on_status(MSG_ACTION_SENT)
                     except Exception as e:
                         if self.on_status:
                             self.on_status(f"Error: {e}")
             elif self.on_status:
                 if status == STATUS_MINIMIZED:
-                    self.on_status("Roblox minimized")
+                    self.on_status(MSG_ROBLOX_MINIMIZED)
                 else:
-                    self.on_status("Roblox window not found")
+                    self.on_status(MSG_ROBLOX_NOT_FOUND)
             deadline = time.monotonic() + self.interval_sec
             while self.running and time.monotonic() < deadline:
                 time.sleep(SLEEP_CHUNK_SEC)

@@ -1,0 +1,51 @@
+name: Build and Release EXE
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Read version from app.py
+        id: version
+        shell: pwsh
+        run: |
+          $version = python -c "import re, pathlib; t=pathlib.Path('app.py').read_text(encoding='utf-8'); m=re.search(r'^APP_VERSION\s*=\s*[\"\']([^\"\']+)[\"\']', t, re.M); print(m.group(1) if m else '')"
+          if (-not $version) { throw "APP_VERSION not found in app.py" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build EXE
+        run: pyinstaller --onefile --noconsole --name antiAFK4roblox --hidden-import=win32com.client main.py
+
+      - name: Package artifact
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/antiAFK4roblox.exe -DestinationPath dist/antiAFK4roblox-${{ steps.version.outputs.tag }}-windows.zip
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: dist/antiAFK4roblox-${{ steps.version.outputs.tag }}-windows.zip

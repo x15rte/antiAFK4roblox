@@ -1,5 +1,6 @@
 # Roblox anti-AFK GUI: interval (min+sec), Start/Stop, status; refuse start if window minimized.
 import webbrowser
+from typing import Optional
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
@@ -12,16 +13,20 @@ from anti_afk import (
     STATUS_OK,
     STATUS_MINIMIZED,
     STATUS_NOT_FOUND,
+    MSG_ACTION_SENT,
+    MSG_ROBLOX_MINIMIZED,
+    MSG_ROBLOX_NOT_FOUND,
 )
 
 APP_NAME = "antiAFK4roblox"
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 WINDOW_TITLE = f"{APP_NAME} v{APP_VERSION}"
 
 PADX, PADY = 8, 4
 HINT_NOT_FOUND = "Roblox window not found. Start Roblox and join a game first."
 HINT_MINIMIZED = "Restore Roblox window from taskbar, then click Start again."
 TIP_NO_MINIMIZE = "Do not minimize Roblox"
+HINT_INTERVAL_ADJUSTED = "Interval adjusted to {mins}m {secs}s."
 WARN_MINIMIZED_TITLE = "Roblox minimized"
 WARN_MINIMIZED = "Roblox window is minimized. Restore it from the taskbar for anti-AFK to work."
 
@@ -51,22 +56,28 @@ def main():
     interval_min_var = tk.StringVar(value="15")
     interval_sec_var = tk.StringVar(value="0")
     status_var = tk.StringVar(value="Stopped")
-    worker = [None]
-    btn_start_ref, btn_stop_ref = [None], [None]
-    spin_min_ref, spin_sec_ref = [None], [None]
+    worker: Optional[AntiAFKWorker] = None
+    btn_start_ref: Optional[ttk.Button] = None
+    btn_stop_ref: Optional[ttk.Button] = None
+    spin_min_ref: Optional[tk.Spinbox] = None
+    spin_sec_ref: Optional[tk.Spinbox] = None
 
     def validate_interval():
         """Parse min/sec, clamp range; total interval at least 1 second."""
+        corrected = False
         try:
-            m = int(interval_min_var.get().strip())
-            s = int(interval_sec_var.get().strip())
+            raw_m = int(interval_min_var.get().strip())
+            raw_s = int(interval_sec_var.get().strip())
         except ValueError:
-            return 15, 0
-        m = max(0, min(999, m))
-        s = max(0, min(59, s))
+            return 15, 0, True
+        m = max(0, min(999, raw_m))
+        s = max(0, min(59, raw_s))
+        if m != raw_m or s != raw_s:
+            corrected = True
         if m == 0 and s == 0:
             m, s = 15, 0
-        return m, s
+            corrected = True
+        return m, s, corrected
 
     lf_interval = ttk.LabelFrame(root, text="Interval", padding=6)
     lf_interval.pack(fill=tk.X, padx=PADX, pady=(PADY, 2))
@@ -78,39 +89,41 @@ def main():
     ttk.Label(f_interval, text="Seconds").pack(side=tk.LEFT, padx=(0, 4))
     spin_sec = tk.Spinbox(f_interval, from_=0, to=59, textvariable=interval_sec_var, width=6)
     spin_sec.pack(side=tk.LEFT)
-    spin_min_ref[0], spin_sec_ref[0] = spin_min, spin_sec
+    spin_min_ref, spin_sec_ref = spin_min, spin_sec
 
     hint_var = tk.StringVar(value="")
     hint_label = ttk.Label(root, textvariable=hint_var, foreground="gray", wraplength=300)
 
     def pause_and_warn():
         """Stop worker, set status to paused/minimized, re-enable Start, show warning."""
-        if worker[0] is None:
+        nonlocal worker
+        if worker is None:
             return
-        worker[0].stop()
-        worker[0] = None
+        worker.stop()
+        worker = None
         status_var.set("Paused: Roblox minimized")
         hint_var.set(HINT_MINIMIZED)
-        if btn_start_ref[0]:
-            btn_start_ref[0].config(state="normal")
-        if btn_stop_ref[0]:
-            btn_stop_ref[0].config(state="disabled")
-        for wdg in (spin_min_ref[0], spin_sec_ref[0]):
+        if btn_start_ref:
+            btn_start_ref.config(state="normal")
+        if btn_stop_ref:
+            btn_stop_ref.config(state="disabled")
+        for wdg in (spin_min_ref, spin_sec_ref):
             if wdg:
                 wdg.config(state="normal")
         messagebox.showwarning(WARN_MINIMIZED_TITLE, WARN_MINIMIZED)
 
     def on_status(msg):
         root.after(0, lambda: status_var.set(msg))
-        if msg == "Roblox window not found":
+        if msg == MSG_ROBLOX_NOT_FOUND:
             root.after(0, lambda: hint_var.set(HINT_NOT_FOUND))
-        elif msg == "Roblox minimized":
+        elif msg == MSG_ROBLOX_MINIMIZED:
             root.after(0, pause_and_warn)
         else:
             root.after(0, lambda: hint_var.set(""))
 
     def start():
-        if worker[0] is not None:
+        nonlocal worker
+        if worker is not None:
             return
         hwnd, status = find_roblox_window()
         if status == STATUS_MINIMIZED:
@@ -119,20 +132,23 @@ def main():
             hint_var.set(HINT_MINIMIZED)
             return
         if status == STATUS_NOT_FOUND or hwnd is None:
-            status_var.set("Roblox window not found")
+            status_var.set(MSG_ROBLOX_NOT_FOUND)
             hint_var.set(HINT_NOT_FOUND)
             return
-        mins, secs = validate_interval()
+        mins, secs, corrected = validate_interval()
         interval_min_var.set(str(mins))
         interval_sec_var.set(str(secs))
         total_sec = mins * 60 + secs
         status_var.set("Running...")
-        hint_var.set("")
+        if corrected:
+            hint_var.set(HINT_INTERVAL_ADJUSTED.format(mins=mins, secs=secs))
+        else:
+            hint_var.set("")
 
         def do_action(hwnd):
             try:
                 run_action(hwnd)
-                status_var.set("Action sent")
+                status_var.set(MSG_ACTION_SENT)
             except Exception as e:
                 status_var.set(f"Error: {e}")
 
@@ -140,28 +156,29 @@ def main():
             root.after(0, lambda hw=h: do_action(hw))
 
         w = AntiAFKWorker(total_sec, on_status=on_status, schedule_action=schedule_action)
-        worker[0] = w
+        worker = w
         w.start()
-        if btn_start_ref[0]:
-            btn_start_ref[0].config(state="disabled")
-        if btn_stop_ref[0]:
-            btn_stop_ref[0].config(state="normal")
-        for wdg in (spin_min_ref[0], spin_sec_ref[0]):
+        if btn_start_ref:
+            btn_start_ref.config(state="disabled")
+        if btn_stop_ref:
+            btn_stop_ref.config(state="normal")
+        for wdg in (spin_min_ref, spin_sec_ref):
             if wdg:
                 wdg.config(state="disabled")
 
     def stop():
-        if worker[0] is None:
+        nonlocal worker
+        if worker is None:
             return
-        worker[0].stop()
-        worker[0] = None
+        worker.stop()
+        worker = None
         status_var.set("Stopped")
         hint_var.set("")
-        if btn_start_ref[0]:
-            btn_start_ref[0].config(state="normal")
-        if btn_stop_ref[0]:
-            btn_stop_ref[0].config(state="disabled")
-        for wdg in (spin_min_ref[0], spin_sec_ref[0]):
+        if btn_start_ref:
+            btn_start_ref.config(state="normal")
+        if btn_stop_ref:
+            btn_stop_ref.config(state="disabled")
+        for wdg in (spin_min_ref, spin_sec_ref):
             if wdg:
                 wdg.config(state="normal")
 
@@ -169,10 +186,10 @@ def main():
     f_btn.pack(fill=tk.X, padx=PADX, pady=PADY)
     btn_start = ttk.Button(f_btn, text="Start", command=start)
     btn_start.pack(side=tk.LEFT, padx=(0, 8))
-    btn_start_ref[0] = btn_start
+    btn_start_ref = btn_start
     btn_stop = ttk.Button(f_btn, text="Stop", command=stop, state="disabled")
     btn_stop.pack(side=tk.LEFT)
-    btn_stop_ref[0] = btn_stop
+    btn_stop_ref = btn_stop
 
     f_status = ttk.Frame(root)
     f_status.pack(fill=tk.X, padx=PADX, pady=(0, 2))
@@ -186,8 +203,8 @@ def main():
     link_label.bind("<Button-1>", lambda e: webbrowser.open(repo_url))
 
     root.mainloop()
-    if worker[0] is not None:
-        worker[0].stop()
+    if worker is not None:
+        worker.stop()
 
 
 if __name__ == "__main__":
