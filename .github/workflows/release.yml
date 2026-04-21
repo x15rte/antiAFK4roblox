@@ -23,8 +23,10 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $version = python -c "import re, pathlib; t=pathlib.Path('app.py').read_text(encoding='utf-8'); m=re.search(r'^APP_VERSION\s*=\s*[\"\']([^\"\']+)[\"\']', t, re.M); print(m.group(1) if m else '')"
-          if (-not $version) { throw "APP_VERSION not found in app.py" }
+          $content = Get-Content -Path app.py -Raw
+          $match = [regex]::Match($content, '(?m)^APP_VERSION\s*=\s*["'']([^"'']+)["'']')
+          if (-not $match.Success) { throw "APP_VERSION not found in app.py" }
+          $version = $match.Groups[1].Value
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=v$version" >> $env:GITHUB_OUTPUT
 
