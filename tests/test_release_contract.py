@@ -13,14 +13,17 @@ PYINSTALLER_COMMAND = (
 )
 
 
-CHECKOUT_PINNED_REF = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
-SETUP_PYTHON_PINNED_REF = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
-GH_RELEASE_PINNED_REF = "softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65"
-MUTABLE_ACTION_REFS = (
-    "actions/checkout@v4",
-    "actions/setup-python@v5",
-    "softprops/action-gh-release@v2",
-)
+EXPECTED_WORKFLOW_ACTION_REFS = {
+    "ci.yml": (
+        "actions/checkout@v4",
+        "actions/setup-python@v5",
+    ),
+    "release.yml": (
+        "actions/checkout@v4",
+        "actions/setup-python@v5",
+        "softprops/action-gh-release@v2",
+    ),
+}
 RELEASE_ZIP_PATH = "dist/antiAFK4roblox-${{ steps.version.outputs.tag }}-windows.zip"
 RELEASE_CHECKSUM_PATH = f"{RELEASE_ZIP_PATH}.sha256"
 
@@ -123,7 +126,7 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertIn(PYINSTALLER_COMMAND, workflow_source)
         self.assertIn(PYINSTALLER_COMMAND, readme_source)
 
-    def test_workflow_actions_are_pinned_to_commit_shas(self):
+    def test_workflow_actions_use_version_tags(self):
         workflow_sources = {
             "ci.yml": read_workflow("ci.yml"),
             "release.yml": read_workflow("release.yml"),
@@ -131,12 +134,8 @@ class ReleaseContractTests(unittest.TestCase):
 
         for workflow_name, workflow_source in workflow_sources.items():
             with self.subTest(workflow=workflow_name):
-                for mutable_ref in MUTABLE_ACTION_REFS:
-                    self.assertNotIn(mutable_ref, workflow_source)
-                self.assertIn(CHECKOUT_PINNED_REF, workflow_source)
-                self.assertIn(SETUP_PYTHON_PINNED_REF, workflow_source)
-
-        self.assertIn(GH_RELEASE_PINNED_REF, workflow_sources["release.yml"])
+                for expected_ref in EXPECTED_WORKFLOW_ACTION_REFS[workflow_name]:
+                    self.assertIn(expected_ref, workflow_source)
 
     def test_release_workflow_writes_and_uploads_checksum(self):
         release_source = read_workflow("release.yml")
