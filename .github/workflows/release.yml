@@ -33,24 +33,65 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=v$version" >> $env:GITHUB_OUTPUT
 
+      - name: Fail if release tag already exists
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          git fetch --tags --force
+          if ($LASTEXITCODE -ne 0) { throw "Could not fetch tags before checking release tag $tag." }
+          git rev-parse -q --verify "refs/tags/$tag" *> $null
+          $tagCheckExitCode = $LASTEXITCODE
+          if ($tagCheckExitCode -eq 0) { throw "Release tag $tag already exists. Bump APP_VERSION in app.py before dispatching." }
+          if ($tagCheckExitCode -ne 1) { throw "Could not check release tag $tag (git rev-parse exited $tagCheckExitCode)." }
+          $global:LASTEXITCODE = 0
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
 
+      - name: Run checks
+        run: |
+          python -m py_compile main.py app.py anti_afk.py
+          python -m unittest discover -s tests -t . -p "test*.py" -v
+
+      - name: Install build dependencies
+        run: |
+          pip install -r requirements-build.txt
       - name: Build EXE
-        run: pyinstaller --onefile --noconsole --name antiAFK4roblox --hidden-import=win32com.client main.py
+        run: pyinstaller --onefile --noconsole --name antiAFK4roblox --hidden-import=pythoncom --hidden-import=win32com.client main.py
 
       - name: Package artifact
         shell: pwsh
         run: |
           Compress-Archive -Path dist/antiAFK4roblox.exe -DestinationPath dist/antiAFK4roblox-${{ steps.version.outputs.tag }}-windows.zip
 
+      - name: Write package checksum
+        shell: pwsh
+        run: |
+          $zip = "dist/antiAFK4roblox-${{ steps.version.outputs.tag }}-windows.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLowerInvariant()
+          $leaf = Split-Path -Leaf $zip
+          "$hash  $leaf" | Set-Content -Path "$zip.sha256" -Encoding ascii
+
+      - name: Verify package artifact
+        shell: pwsh
+        run: |
+          $zip = "dist/antiAFK4roblox-${{ steps.version.outputs.tag }}-windows.zip"
+          $checksum = "$zip.sha256"
+          $zipLeaf = Split-Path -Leaf $zip
+          if (-not (Test-Path $zip)) { throw "Expected package artifact at $zip" }
+          if ((Get-Item $zip).Length -le 0) { throw "Package artifact is empty" }
+          if (-not (Test-Path $checksum)) { throw "Expected package checksum at $checksum" }
+          if ((Get-Item $checksum).Length -le 0) { throw "Package checksum is empty" }
+          if (-not ((Get-Content -Path $checksum -Raw).Contains($zipLeaf))) { throw "Package checksum does not reference $zipLeaf" }
+
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
           generate_release_notes: true
-          files: dist/antiAFK4roblox-${{ steps.version.outputs.tag }}-windows.zip
+          files: |
+            dist/antiAFK4roblox-${{ steps.version.outputs.tag }}-windows.zip
+            dist/antiAFK4roblox-${{ steps.version.outputs.tag }}-windows.zip.sha256
