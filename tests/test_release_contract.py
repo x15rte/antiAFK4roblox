@@ -161,27 +161,44 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertIn(RELEASE_ZIP_PATH, files_block)
         self.assertIn(RELEASE_CHECKSUM_PATH, files_block)
 
-    def test_release_tag_guard_resets_expected_missing_tag_exit_code(self):
+    def test_release_workflow_supports_manual_dispatch_and_version_tag_pushes(self):
         release_source = read_workflow("release.yml")
 
-        self.assertIn(
-            'if ($LASTEXITCODE -ne 0) { throw "Could not fetch tags before checking release tag $tag." }',
+        on_block_match = re.search(
+            r"(?ms)^on:\s*\n(?P<body>.*?)(?=^[A-Za-z_-]+:|\Z)",
             release_source,
         )
-        self.assertIn("$tagCheckExitCode = $LASTEXITCODE", release_source)
-        self.assertIn(
-            'if ($tagCheckExitCode -eq 0) { throw "Release tag $tag already exists. Bump APP_VERSION in app.py before dispatching." }',
-            release_source,
+
+        self.assertIsNotNone(on_block_match)
+        assert on_block_match is not None
+        on_block = on_block_match.group("body")
+        self.assertIn("workflow_dispatch:", on_block)
+        self.assertRegex(
+            on_block,
+            r"(?m)^\s+push:\s*\n\s+tags:\s*\n\s+- ['\"]?v\*['\"]?\s*$",
         )
-        self.assertIn(
-            'if ($tagCheckExitCode -ne 1) { throw "Could not check release tag $tag (git rev-parse exited $tagCheckExitCode)." }',
-            release_source,
-        )
-        self.assertIn("$global:LASTEXITCODE = 0", release_source)
-        self.assertNotIn(
-            'if ($LASTEXITCODE -eq 0) { throw "Release tag $tag already exists. Bump APP_VERSION in app.py before dispatching." }',
-            release_source,
-        )
+
+    def test_release_workflow_validates_tag_pushes_against_app_version(self):
+        release_source = read_workflow("release.yml")
+
+        for expected_text in (
+            "APP_VERSION not found in app.py",
+            '$tag = "v$version"',
+            'if ($env:GITHUB_EVENT_NAME -eq \'push\' -and \'${{ github.ref_name }}\' -ne $tag) { throw "Tag push ref \'${{ github.ref_name }}\' does not match expected release tag $tag." }',
+        ):
+            with self.subTest(expected_text=expected_text):
+                self.assertIn(expected_text, release_source)
+
+    def test_release_workflow_does_not_block_existing_tags_or_releases(self):
+        release_source = read_workflow("release.yml")
+
+        for obsolete_guard in (
+            "Fail if release tag already exists",
+            'Release tag $tag already exists',
+            'git rev-parse -q --verify "refs/tags/$tag"',
+        ):
+            with self.subTest(obsolete_guard=obsolete_guard):
+                self.assertNotIn(obsolete_guard, release_source)
 
 
 if __name__ == "__main__":

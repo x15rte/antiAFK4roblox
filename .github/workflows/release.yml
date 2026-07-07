@@ -4,8 +4,10 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
-
 permissions:
   contents: write
 
@@ -30,20 +32,10 @@ jobs:
           $match = [regex]::Match($content, '(?m)^APP_VERSION\s*=\s*["'']([^"'']+)["'']')
           if (-not $match.Success) { throw "APP_VERSION not found in app.py" }
           $version = $match.Groups[1].Value
+          $tag = "v$version"
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and '${{ github.ref_name }}' -ne $tag) { throw "Tag push ref '${{ github.ref_name }}' does not match expected release tag $tag." }
           "version=$version" >> $env:GITHUB_OUTPUT
-          "tag=v$version" >> $env:GITHUB_OUTPUT
-
-      - name: Fail if release tag already exists
-        shell: pwsh
-        run: |
-          $tag = "${{ steps.version.outputs.tag }}"
-          git fetch --tags --force
-          if ($LASTEXITCODE -ne 0) { throw "Could not fetch tags before checking release tag $tag." }
-          git rev-parse -q --verify "refs/tags/$tag" *> $null
-          $tagCheckExitCode = $LASTEXITCODE
-          if ($tagCheckExitCode -eq 0) { throw "Release tag $tag already exists. Bump APP_VERSION in app.py before dispatching." }
-          if ($tagCheckExitCode -ne 1) { throw "Could not check release tag $tag (git rev-parse exited $tagCheckExitCode)." }
-          $global:LASTEXITCODE = 0
+          "tag=$tag" >> $env:GITHUB_OUTPUT
 
       - name: Install dependencies
         run: |
