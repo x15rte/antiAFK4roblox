@@ -10,7 +10,6 @@ This tool currently supports Windows only.
 
 This tool automates Roblox input. Automation may violate Roblox Terms of Use or individual experience rules and can put your account at risk. Use only if you understand and accept that risk.
 
-20260724: since I am no longer playing Roblox, this project is no longer being maintained.
 ## Requirements
 
 - Windows.
